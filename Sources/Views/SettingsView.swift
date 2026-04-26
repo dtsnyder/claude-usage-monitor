@@ -4,7 +4,7 @@ import ServiceManagement
 struct SettingsView: View {
     @ObservedObject var calculator: UsageCalculator
     @ObservedObject var updateChecker: UpdateChecker
-    @Environment(\.dismiss) private var dismiss
+    let onDone: () -> Void
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -77,7 +77,7 @@ struct SettingsView: View {
             HStack {
                 Spacer()
                 Button("Done") {
-                    dismiss()
+                    onDone()
                 }
                 .keyboardShortcut(.defaultAction)
             }

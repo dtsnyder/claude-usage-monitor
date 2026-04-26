@@ -6,6 +6,23 @@ struct UsagePopoverView: View {
     @State private var showSettings = false
 
     var body: some View {
+        Group {
+            if showSettings {
+                SettingsView(
+                    calculator: calculator,
+                    updateChecker: updateChecker,
+                    onDone: { showSettings = false }
+                )
+            } else {
+                mainContent
+            }
+        }
+        .onAppear {
+            calculator.recalculate(force: true)
+        }
+    }
+
+    private var mainContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             Divider()
@@ -39,7 +56,7 @@ struct UsagePopoverView: View {
 
             HStack {
                 Button {
-                    showSettings.toggle()
+                    showSettings = true
                 } label: {
                     Label("Settings", systemImage: "gear")
                 }
@@ -82,12 +99,6 @@ struct UsagePopoverView: View {
         }
         .padding(16)
         .frame(width: 320)
-        .onAppear {
-            calculator.recalculate(force: true)
-        }
-        .sheet(isPresented: $showSettings) {
-            SettingsView(calculator: calculator, updateChecker: updateChecker)
-        }
     }
 
     private var header: some View {
