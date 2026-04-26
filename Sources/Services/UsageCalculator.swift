@@ -16,9 +16,9 @@ final class UsageCalculator: ObservableObject {
         var message: String {
             switch self {
             case .expired:
-                return "Token expired — use Claude Code to refresh"
+                return "Couldn't refresh token — sign in to Claude Code"
             case .authFailed:
-                return "Auth failed — run 'claude' in terminal"
+                return "Auth failed — sign in to Claude Code"
             }
         }
     }
@@ -82,7 +82,7 @@ final class UsageCalculator: ObservableObject {
                 guard !Task.isCancelled else { return }
 
                 switch apiError {
-                case .tokenExpired:
+                case .tokenRefreshFailed:
                     self.handleTokenIssue(.expired)
                 case .httpError(401), .httpError(403):
                     self.handleTokenIssue(.authFailed)

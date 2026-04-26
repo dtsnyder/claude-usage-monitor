@@ -38,6 +38,9 @@ struct UsageAPIResponse: Codable {
 
 final class APIClient {
     private let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
+    private let refreshURL = URL(string: "https://platform.claude.com/v1/oauth/token")!
+    private let clientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+    private let keychainService = "Claude Code-credentials"
 
     struct OAuthCredentials: Codable {
         var claudeAiOauth: OAuthToken
@@ -50,9 +53,34 @@ final class APIClient {
         }
     }
 
-    func fetchUsage() async throws -> UsageAPIResponse {
-        let token = try getAccessToken()
+    private struct TokenRefreshResponse: Decodable {
+        let accessToken: String
+        let refreshToken: String?
+        let expiresIn: Int
 
+        enum CodingKeys: String, CodingKey {
+            case accessToken = "access_token"
+            case refreshToken = "refresh_token"
+            case expiresIn = "expires_in"
+        }
+    }
+
+    func fetchUsage() async throws -> UsageAPIResponse {
+        let token = try await getAccessToken()
+        do {
+            return try await performUsageRequest(token: token)
+        } catch let error as APIError {
+            // Server may invalidate a token before our local expiry check fires
+            // (e.g. revoked from another device). Try one transparent refresh.
+            if case .httpError(let code) = error, code == 401 || code == 403 {
+                let refreshed = try await refreshAndPersist()
+                return try await performUsageRequest(token: refreshed.claudeAiOauth.accessToken)
+            }
+            throw error
+        }
+    }
+
+    private func performUsageRequest(token: String) async throws -> UsageAPIResponse {
         var request = URLRequest(url: usageURL, cachePolicy: .reloadIgnoringLocalCacheData)
         request.httpMethod = "GET"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -89,22 +117,28 @@ final class APIClient {
         }
     }
 
-    private func getAccessToken() throws -> String {
+    private func getAccessToken() async throws -> String {
         let credentials = try readCredentials()
 
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         let bufferMs: Int64 = 60_000
         if credentials.claudeAiOauth.expiresAt - bufferMs <= nowMs {
-            throw APIError.tokenExpired
+            // Refresh transparently using the stored refresh_token so the user
+            // doesn't have to keep `claude` running in a terminal just to keep
+            // the access token alive when they use Claude Desktop instead.
+            let refreshed = try await refreshAndPersist()
+            return refreshed.claudeAiOauth.accessToken
         }
 
         return credentials.claudeAiOauth.accessToken
     }
 
+    // MARK: - Keychain
+
     private func readCredentials() throws -> OAuthCredentials {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-s", "Claude Code-credentials", "-w"]
+        process.arguments = ["find-generic-password", "-s", keychainService, "-w"]
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -131,6 +165,123 @@ final class APIClient {
         }
     }
 
+    /// Read the keychain item's account name so the rewrite uses the same
+    /// (service, account) tuple — otherwise `add-generic-password -U` would
+    /// create a duplicate entry instead of updating the existing one.
+    private func readCredentialsAccount() -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", keychainService]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return NSUserName()
+        }
+
+        guard process.terminationStatus == 0 else { return NSUserName() }
+
+        let output = String(
+            data: pipe.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        ) ?? ""
+
+        // Output contains a line like:  "acct"<blob>="danny"
+        for rawLine in output.split(separator: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("\"acct\"") else { continue }
+            if let range = line.range(of: #"="[^"]+""#, options: .regularExpression) {
+                let match = line[range]
+                let value = match.dropFirst(2).dropLast()
+                return String(value)
+            }
+        }
+        return NSUserName()
+    }
+
+    private func saveCredentials(_ credentials: OAuthCredentials, account: String) throws {
+        let data = try JSONEncoder().encode(credentials)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw APIError.keychainWriteFailed
+        }
+
+        // -U updates the (service, account) item in place if it exists, or
+        // creates it otherwise. This is atomic — there is no window where the
+        // item is missing, so the Claude Code CLI never sees the entry vanish
+        // mid-rotation (which is what caused the earlier "logout" regression).
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = [
+            "add-generic-password",
+            "-U",
+            "-s", keychainService,
+            "-a", account,
+            "-w", json,
+        ]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            throw APIError.keychainWriteFailed
+        }
+    }
+
+    // MARK: - Token refresh
+
+    private func refreshAndPersist() async throws -> OAuthCredentials {
+        let credentials = try readCredentials()
+        let account = readCredentialsAccount()
+        let refreshed = try await refreshAccessToken(credentials)
+        try saveCredentials(refreshed, account: account)
+        return refreshed
+    }
+
+    private func refreshAccessToken(_ credentials: OAuthCredentials) async throws -> OAuthCredentials {
+        var request = URLRequest(url: refreshURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: String] = [
+            "grant_type": "refresh_token",
+            "refresh_token": credentials.claudeAiOauth.refreshToken,
+            "client_id": clientId,
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            if let raw = String(data: data, encoding: .utf8), !raw.isEmpty {
+                print("⚠️ Token refresh failed: \(raw)")
+            }
+            throw APIError.tokenRefreshFailed
+        }
+
+        let tokenResponse: TokenRefreshResponse
+        do {
+            tokenResponse = try JSONDecoder().decode(TokenRefreshResponse.self, from: data)
+        } catch {
+            throw APIError.tokenRefreshFailed
+        }
+
+        var updated = credentials
+        updated.claudeAiOauth.accessToken = tokenResponse.accessToken
+        updated.claudeAiOauth.expiresAt =
+            Int64(Date().timeIntervalSince1970 * 1000) + Int64(tokenResponse.expiresIn) * 1000
+        if let newRefresh = tokenResponse.refreshToken {
+            updated.claudeAiOauth.refreshToken = newRefresh
+        }
+        return updated
+    }
+
     enum APIError: LocalizedError {
         case noCredentials
         case corruptedCredentials
@@ -138,7 +289,8 @@ final class APIClient {
         case emptyResponse
         case httpError(Int)
         case rateLimited(retryAfter: TimeInterval?)
-        case tokenExpired
+        case tokenRefreshFailed
+        case keychainWriteFailed
 
         var errorDescription: String? {
             switch self {
@@ -151,7 +303,7 @@ final class APIClient {
             case .emptyResponse:
                 return "API returned empty response. Please try again later."
             case .httpError(401), .httpError(403):
-                return "Authentication failed. Run 'claude' in terminal to refresh your credentials."
+                return "Authentication failed. Sign in to Claude Code (terminal or Desktop) to refresh."
             case .httpError(429):
                 return "Rate limited. Try again in a moment."
             case .httpError(let code):
@@ -161,8 +313,10 @@ final class APIClient {
                     return "Rate limited. Retrying in \(Int(seconds))s."
                 }
                 return "Rate limited. Try again in a moment."
-            case .tokenExpired:
-                return "Token expired — use Claude Code to refresh."
+            case .tokenRefreshFailed:
+                return "Couldn't refresh credentials. Sign in to Claude Code to re-authenticate."
+            case .keychainWriteFailed:
+                return "Failed to update credentials in Keychain."
             }
         }
     }

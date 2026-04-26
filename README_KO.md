@@ -70,9 +70,10 @@ make uninstall
 
 ## 작동 방식
 
-1. macOS 키체인에서 Claude Code OAuth 토큰을 **읽기 전용**으로 가져옵니다 (`Claude Code-credentials`) — 키체인에 쓰기를 하지 않으므로 Claude Code CLI에 영향을 주지 않습니다
+1. macOS 키체인에서 Claude Code OAuth 토큰을 가져옵니다 (`Claude Code-credentials`) — 사용량은 서버에서 계정 단위로 합산되므로 터미널 CLI / Claude Desktop 앱 / 웹에서 쓴 사용량이 모두 반영됩니다
 2. 팝오버를 열 때 Anthropic API에서 사용량 데이터를 온디맨드로 가져오며, 백그라운드에서 30분마다 자동 갱신합니다
-3. 사용량 데이터를 로컬에 캐시하여 API를 사용할 수 없거나 토큰이 만료되어도 앱이 정상적으로 작동합니다
+3. **OAuth 토큰이 만료되면 저장된 refresh token으로 자동 재발급**합니다 — 터미널에서 `claude`를 계속 실행해 둘 필요가 없습니다. 키체인 항목은 원자적으로(`security add-generic-password -U`) 업데이트하므로 CLI 로그아웃 문제가 발생하지 않습니다
+4. 사용량 데이터를 로컬에 캐시하여 API를 사용할 수 없을 때도 앱이 정상적으로 작동합니다
 
 **API 키나 수동 설정이 필요 없습니다!** — Claude Code CLI가 자동으로 저장하는 동일한 자격 증명을 사용합니다.
 
@@ -83,8 +84,8 @@ make uninstall
 - 7일간 주간 사용률 및 모델별 분석 (Opus, Sonnet)
 - 팝오버 열 때 온디맨드 새로고침 (30초 쿨다운)
 - 30분 간격 백그라운드 폴링으로 최신 상태 유지
+- OAuth 토큰 자동 갱신 — Claude Desktop만 쓰고 터미널을 열지 않아도 동작합니다
 - 앱 재시작 시에도 유지되는 로컬 디스크 캐시
-- 토큰 만료 시 캐시 데이터 자동 폴백
 - 로그인 시 자동 실행 지원
 - GitHub Releases를 통한 자동 업데이트 알림 (24시간마다 확인)
 

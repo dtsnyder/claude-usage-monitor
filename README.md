@@ -70,9 +70,10 @@ make uninstall
 
 ## How It Works
 
-1. Reads your Claude Code OAuth token from the macOS Keychain in **read-only mode** (`Claude Code-credentials`) — never writes to the Keychain, so it won't interfere with Claude Code CLI
+1. Reads your Claude Code OAuth token from the macOS Keychain (`Claude Code-credentials`) — usage data from claude.ai/Desktop/CLI is all aggregated server-side, so any Claude Code session counts
 2. Fetches usage data from the Anthropic API on-demand when you open the popover, with a background refresh every 30 minutes
-3. Caches usage data locally so the app stays responsive even when the API is unavailable or the token has expired
+3. **Auto-refreshes the OAuth token** when it expires using the stored refresh token, so you don't need to keep `claude` running in a terminal — the Keychain entry is updated atomically (`security add-generic-password -U`) so the CLI stays logged in
+4. Caches usage data locally so the app stays responsive even when the API is unavailable
 
 **No API keys or manual configuration required!** — it uses the same credentials that Claude Code CLI stores automatically.
 
@@ -83,8 +84,8 @@ make uninstall
 - 7-day weekly utilization with per-model breakdown (Opus, Sonnet)
 - On-demand refresh when opening the popover (30s cooldown)
 - Background polling every 30 minutes to stay up-to-date
+- Automatic OAuth token refresh — works even if you only use Claude Desktop and never open a terminal
 - Local disk cache for persistent data across app restarts
-- Graceful handling of expired tokens with cached data fallback
 - Launch at login support
 - Automatic update notifications via GitHub Releases (checks every 24h)
 
