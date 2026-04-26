@@ -5,12 +5,15 @@ struct UsageAPIResponse: Codable {
     let sevenDay: WindowData?
     let sevenDayOpus: WindowData?
     let sevenDaySonnet: WindowData?
+    let sevenDayClaudeDesign: WindowData?
 
     enum CodingKeys: String, CodingKey {
         case fiveHour = "five_hour"
         case sevenDay = "seven_day"
         case sevenDayOpus = "seven_day_opus"
         case sevenDaySonnet = "seven_day_sonnet"
+        // Claude Design is named "omelette" in the API for historical reasons.
+        case sevenDayClaudeDesign = "seven_day_omelette"
     }
 
     struct WindowData: Codable {

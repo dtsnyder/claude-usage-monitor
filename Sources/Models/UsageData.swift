@@ -28,6 +28,7 @@ struct UsageSummary {
     let weekly: WindowSummary
     let weeklyOpus: WindowSummary?
     let weeklySonnet: WindowSummary?
+    let weeklyClaudeDesign: WindowSummary?
     let lastUpdated: Date
 }
 

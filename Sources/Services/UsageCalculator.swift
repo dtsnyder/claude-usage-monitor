@@ -150,11 +150,21 @@ final class UsageCalculator: ObservableObject {
             nil
         }
 
+        let weeklyClaudeDesign: WindowSummary? = if let design = response.sevenDayClaudeDesign {
+            WindowSummary(
+                percentage: min(design.utilization / 100.0, 1.0),
+                resetsAt: parseISO8601(design.resetsAt)
+            )
+        } else {
+            nil
+        }
+
         return UsageSummary(
             fiveHour: fiveHour,
             weekly: weekly,
             weeklyOpus: weeklyOpus,
             weeklySonnet: weeklySonnet,
+            weeklyClaudeDesign: weeklyClaudeDesign,
             lastUpdated: Date()
         )
     }
@@ -188,6 +198,9 @@ final class UsageCalculator: ObservableObject {
                 WindowSummary(percentage: min($0.utilization / 100.0, 1.0), resetsAt: parseISO8601($0.resetsAt))
             },
             weeklySonnet: response.sevenDaySonnet.map {
+                WindowSummary(percentage: min($0.utilization / 100.0, 1.0), resetsAt: parseISO8601($0.resetsAt))
+            },
+            weeklyClaudeDesign: response.sevenDayClaudeDesign.map {
                 WindowSummary(percentage: min($0.utilization / 100.0, 1.0), resetsAt: parseISO8601($0.resetsAt))
             },
             lastUpdated: cachedDate

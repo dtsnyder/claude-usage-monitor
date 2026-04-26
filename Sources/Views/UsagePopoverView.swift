@@ -165,6 +165,9 @@ struct UsagePopoverView: View {
                 if let sonnet = summary.weeklySonnet {
                     modelWeeklyRow(name: "Sonnet", window: sonnet)
                 }
+                if let design = summary.weeklyClaudeDesign {
+                    modelWeeklyRow(name: "Design", window: design)
+                }
             }
         }
     }
