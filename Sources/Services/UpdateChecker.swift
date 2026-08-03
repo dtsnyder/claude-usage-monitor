@@ -9,7 +9,9 @@ struct UpdateInfo {
 final class UpdateChecker: ObservableObject {
     @Published var updateAvailable: UpdateInfo?
 
-    private let repo = "Dann1y/claude-usage-monitor"
+    // No releases are published on this fork, so the check finds nothing and
+    // the badge stays hidden. performCheck() swallows the 404 by design.
+    private let repo = "dtsnyder/claude-usage-monitor"
     private let checkInterval: TimeInterval = 86400 // 24 hours
     private let lastCheckKey = "lastUpdateCheck"
     private let dismissedVersionKey = "dismissedUpdateVersion"

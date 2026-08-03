@@ -11,7 +11,7 @@ A lightweight macOS menu bar app that shows your Claude (claude.ai) usage in rea
 ### Step 1. Build and install
 
 ```bash
-git clone https://github.com/Dann1y/claude-usage-monitor.git
+git clone https://github.com/dtsnyder/claude-usage-monitor.git
 cd claude-usage-monitor
 make install
 ```
@@ -30,7 +30,7 @@ Then open the app. It appears in your menu bar — enable **Launch at login** in
 
 ## Update
 
-The app checks for new versions automatically every 24 hours and shows a notification badge when an update is available. To pick one up, rebuild:
+Rebuild from the latest source:
 
 ```bash
 cd claude-usage-monitor

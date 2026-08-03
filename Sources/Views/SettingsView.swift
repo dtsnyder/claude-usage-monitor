@@ -67,7 +67,7 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
-                        Link("claude-usage-monitor", destination: URL(string: "https://github.com/Dann1y/claude-usage-monitor")!)
+                        Link("claude-usage-monitor", destination: URL(string: "https://github.com/dtsnyder/claude-usage-monitor")!)
                             .font(.caption)
                     }
                     .padding(4)
