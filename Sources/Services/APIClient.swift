@@ -237,6 +237,17 @@ final class APIClient {
         }
     }
 
+    /// The RFC 6749 `error` code from an OAuth error response, when the body is
+    /// a conforming JSON object. Deliberately ignores `error_description`, which
+    /// is free-form text and can carry echoed request parameters.
+    private static func oauthErrorCode(from data: Data) -> String {
+        struct OAuthErrorBody: Decodable { let error: String }
+        guard let parsed = try? JSONDecoder().decode(OAuthErrorBody.self, from: data) else {
+            return "unrecognized error body, \(data.count) bytes"
+        }
+        return "error=\(parsed.error)"
+    }
+
     private static func describeDecodingFailure(_ error: Error) -> String {
         guard let error = error as? DecodingError else { return "not valid JSON" }
         switch error {
@@ -284,9 +295,12 @@ final class APIClient {
 
         guard let httpResponse = response as? HTTPURLResponse,
               httpResponse.statusCode == 200 else {
-            if let raw = String(data: data, encoding: .utf8), !raw.isEmpty {
-                print("⚠️ Token refresh failed: \(raw)")
-            }
+            // Never log the response body. A non-conforming error page, or a
+            // proxy sitting in front of the endpoint, can echo the submitted
+            // refresh_token straight back in it.
+            let statusText = (response as? HTTPURLResponse).map { "HTTP \($0.statusCode)" }
+                ?? "no HTTP response"
+            print("⚠️ Token refresh failed (\(statusText), \(Self.oauthErrorCode(from: data)))")
             throw APIError.tokenRefreshFailed
         }
 
