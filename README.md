@@ -1,7 +1,5 @@
 # Claude Usage Monitor
 
-[한국어](README_KO.md)
-
 <img width="376" height="328" alt="image" src="https://github.com/user-attachments/assets/eaa3dc93-b4a1-496d-a7dc-f7e5909d716e" />
 
 A lightweight macOS menu bar app that shows your Claude (claude.ai) usage in real time.
@@ -10,22 +8,15 @@ A lightweight macOS menu bar app that shows your Claude (claude.ai) usage in rea
 
 ## Install
 
-### Step 1. Download
-
-**Homebrew (Recommended)**
-
-```bash
-brew tap Dann1y/tap
-brew install --cask claude-usage-monitor
-```
-
-**Or manually**
+### Step 1. Build and install
 
 ```bash
 git clone https://github.com/Dann1y/claude-usage-monitor.git
 cd claude-usage-monitor
 make install
 ```
+
+Requires the Xcode command line tools (Swift 5.9+). This builds a universal binary and installs it to `/Applications`.
 
 ### Step 2. Allow app to run
 
@@ -39,20 +30,7 @@ Then open the app. It appears in your menu bar — enable **Launch at login** in
 
 ## Update
 
-The app checks for new versions automatically every 24 hours and shows a notification badge when an update is available.
-
-**Homebrew**
-
-```bash
-brew upgrade --cask claude-usage-monitor
-```
-
-> If `brew upgrade` doesn't detect new versions, run this once to fix it:
-> ```bash
-> git -C "$(brew --repository dann1y/tap)" config homebrew.forceautoupdate true
-> ```
-
-**Or manually**
+The app checks for new versions automatically every 24 hours and shows a notification badge when an update is available. To pick one up, rebuild:
 
 ```bash
 cd claude-usage-monitor
@@ -63,8 +41,6 @@ make install
 ## Uninstall
 
 ```bash
-brew uninstall claude-usage-monitor
-# or
 make uninstall
 ```
 
