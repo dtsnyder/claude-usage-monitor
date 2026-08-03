@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 struct UsageAPIResponse: Codable {
     let fiveHour: WindowData?
@@ -138,111 +139,132 @@ final class APIClient {
 
     // MARK: - Keychain
 
-    private func readCredentials() throws -> OAuthCredentials {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-s", keychainService, "-w"]
+    private struct KeychainItem {
+        let credentials: OAuthCredentials
+        /// Account name reported by the Keychain, when it reported one. Only
+        /// needed if the item has to be recreated from scratch — updates match
+        /// on service alone, so a missing account is not worth guessing at.
+        let account: String?
+    }
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
+    /// Query identifying the Claude Code credential item. No
+    /// `kSecUseDataProtectionKeychain` — the CLI writes to the file-based login
+    /// keychain, and setting it would look in the wrong place.
+    private var keychainQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+        ]
+    }
 
-        try process.run()
-        process.waitUntilExit()
+    private func readKeychainItem() throws -> KeychainItem {
+        var query = keychainQuery
+        query[kSecReturnData as String] = true
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
 
-        guard process.terminationStatus == 0 else {
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        switch status {
+        case errSecSuccess:
+            break
+        case errSecItemNotFound:
+            throw APIError.noCredentials
+        default:
+            // errSecUserCanceled / errSecAuthFailed / errSecInteractionNotAllowed:
+            // the item is there, we just weren't allowed to read it. Telling the
+            // user to re-run `claude` would send them down the wrong path.
+            throw APIError.keychainAccessDenied(status)
+        }
+
+        guard let item = result as? [String: Any],
+              let data = item[kSecValueData as String] as? Data,
+              !data.isEmpty else {
             throw APIError.noCredentials
         }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let json = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !json.isEmpty else {
-            throw APIError.noCredentials
-        }
+        let account = item[kSecAttrAccount as String] as? String
 
         do {
-            return try JSONDecoder().decode(OAuthCredentials.self, from: Data(json.utf8))
+            return KeychainItem(
+                credentials: try JSONDecoder().decode(OAuthCredentials.self, from: data),
+                account: account
+            )
         } catch {
-            print("⚠️ Failed to decode credentials from Keychain. Raw data: \(json)")
+            // Log the shape of the failure, never the payload — it holds the
+            // access and refresh tokens in plaintext.
+            print("⚠️ Failed to decode credentials from Keychain (\(data.count) bytes): \(Self.describeDecodingFailure(error))")
             throw APIError.corruptedCredentials
         }
     }
 
-    /// Read the keychain item's account name so the rewrite uses the same
-    /// (service, account) tuple — otherwise `add-generic-password -U` would
-    /// create a duplicate entry instead of updating the existing one.
-    private func readCredentialsAccount() -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-s", keychainService]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return NSUserName()
-        }
-
-        guard process.terminationStatus == 0 else { return NSUserName() }
-
-        let output = String(
-            data: pipe.fileHandleForReading.readDataToEndOfFile(),
-            encoding: .utf8
-        ) ?? ""
-
-        // Output contains a line like:  "acct"<blob>="danny"
-        for rawLine in output.split(separator: "\n") {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard line.hasPrefix("\"acct\"") else { continue }
-            if let range = line.range(of: #"="[^"]+""#, options: .regularExpression) {
-                let match = line[range]
-                let value = match.dropFirst(2).dropLast()
-                return String(value)
-            }
-        }
-        return NSUserName()
+    private func readCredentials() throws -> OAuthCredentials {
+        try readKeychainItem().credentials
     }
 
-    private func saveCredentials(_ credentials: OAuthCredentials, account: String) throws {
+    private func saveCredentials(_ credentials: OAuthCredentials, account: String?) throws {
         let data = try JSONEncoder().encode(credentials)
-        guard let json = String(data: data, encoding: .utf8) else {
+
+        // Match on service alone. The CLI stores one item under this service,
+        // and narrowing the query with a guessed account name would miss it and
+        // silently add a duplicate next to it instead of updating it.
+        //
+        // SecItemUpdate rewrites the value in place, preserving the existing
+        // item and its ACL. There is no window where the item is missing, so
+        // the Claude Code CLI never sees the entry vanish mid-rotation (which
+        // is what caused the earlier "logout" regression).
+        let status = SecItemUpdate(
+            keychainQuery as CFDictionary,
+            [kSecValueData as String: data] as CFDictionary
+        )
+
+        switch status {
+        case errSecSuccess:
+            return
+        case errSecItemNotFound:
+            var addQuery = keychainQuery
+            addQuery[kSecAttrAccount as String] = account ?? NSUserName()
+            addQuery[kSecValueData as String] = data
+            let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                print("⚠️ Keychain SecItemAdd failed (OSStatus \(addStatus))")
+                throw APIError.keychainWriteFailed
+            }
+        default:
+            print("⚠️ Keychain SecItemUpdate failed (OSStatus \(status))")
             throw APIError.keychainWriteFailed
         }
+    }
 
-        // -U updates the (service, account) item in place if it exists, or
-        // creates it otherwise. This is atomic — there is no window where the
-        // item is missing, so the Claude Code CLI never sees the entry vanish
-        // mid-rotation (which is what caused the earlier "logout" regression).
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = [
-            "add-generic-password",
-            "-U",
-            "-s", keychainService,
-            "-a", account,
-            "-w", json,
-        ]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            throw APIError.keychainWriteFailed
+    private static func describeDecodingFailure(_ error: Error) -> String {
+        guard let error = error as? DecodingError else { return "not valid JSON" }
+        switch error {
+        case .keyNotFound(let key, _):
+            return "missing key '\(key.stringValue)'"
+        case .typeMismatch(_, let context), .valueNotFound(_, let context):
+            return "unexpected type at '\(context.codingPath.map(\.stringValue).joined(separator: "."))'"
+        case .dataCorrupted(let context):
+            return "corrupted at '\(context.codingPath.map(\.stringValue).joined(separator: "."))'"
+        @unknown default:
+            return "unrecognized decoding error"
         }
     }
 
     // MARK: - Token refresh
 
     private func refreshAndPersist() async throws -> OAuthCredentials {
-        let credentials = try readCredentials()
-        let account = readCredentialsAccount()
-        let refreshed = try await refreshAccessToken(credentials)
-        try saveCredentials(refreshed, account: account)
+        let item = try readKeychainItem()
+        let refreshed = try await refreshAccessToken(item.credentials)
+        do {
+            try saveCredentials(refreshed, account: item.account)
+        } catch {
+            // The server has already rotated the pair, so the copy still in the
+            // Keychain is dead regardless. Throwing here would discard the only
+            // live credentials we have and strand the user (and the CLI, which
+            // shares this item). Use them for this session and retry next time.
+            print("⚠️ Refreshed credentials could not be persisted; using them in-memory for this session.")
+        }
         return refreshed
     }
 
@@ -294,6 +316,7 @@ final class APIClient {
         case rateLimited(retryAfter: TimeInterval?)
         case tokenRefreshFailed
         case keychainWriteFailed
+        case keychainAccessDenied(OSStatus)
 
         var errorDescription: String? {
             switch self {
@@ -320,6 +343,8 @@ final class APIClient {
                 return "Couldn't refresh credentials. Sign in to Claude Code to re-authenticate."
             case .keychainWriteFailed:
                 return "Failed to update credentials in Keychain."
+            case .keychainAccessDenied:
+                return "Keychain access denied. Allow Claude Usage Monitor to read the 'Claude Code-credentials' item."
             }
         }
     }
