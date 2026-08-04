@@ -21,10 +21,12 @@ struct ClaudeUsageMonitorApp: App {
                 .foregroundStyle(menuBarColor)
 
             if let summary = calculator.summary {
-                Text("\(Int(summary.fiveHour.percentage * 100))%")
+                // session · weekly. Left uniformly colored so the two numbers
+                // read as one value; the icon carries the warning.
+                Text("\(Self.percentText(summary.fiveHour.percentage)) · \(Self.percentText(summary.weekly.percentage))")
                     .monospacedDigit()
             } else {
-                Text("--")
+                Text("-- · --")
             }
         }
         .onAppear {
@@ -33,11 +35,18 @@ struct ClaudeUsageMonitorApp: App {
         }
     }
 
+    /// Reflects whichever window is closest to its limit. Thresholding on the
+    /// 5-hour window alone showed a green cloud while the weekly limit was
+    /// nearly exhausted, which is the case where a warning matters most.
     private var menuBarColor: Color {
         guard let summary = calculator.summary else { return .secondary }
-        let p = summary.fiveHour.percentage
+        let p = max(summary.fiveHour.percentage, summary.weekly.percentage)
         if p >= 0.8 { return .red }
         if p >= 0.5 { return .orange }
         return .green
+    }
+
+    private static func percentText(_ percentage: Double) -> String {
+        "\(Int(percentage * 100))%"
     }
 }
